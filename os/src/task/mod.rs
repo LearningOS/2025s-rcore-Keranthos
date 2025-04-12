@@ -19,6 +19,7 @@ use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
 use switch::__switch;
+use crate ::syscall::{ SYSCALL_WRITE, SYSCALL_EXIT, SYSCALL_YIELD, SYSCALL_GET_TIME, SYSCALL_TRACE };
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
@@ -39,12 +40,24 @@ pub struct TaskManager {
     inner: UPSafeCell<TaskManagerInner>,
 }
 
+///
+pub struct SyscallCount {
+    inner: [SyscallCountInner; 5],
+}
+
+/// 
+pub struct SyscallCountInner {
+    syscall_id: usize,
+    used_counts: usize,
+}
+
 /// Inner of Task Manager
 pub struct TaskManagerInner {
     /// task list
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    syscalls: [SyscallCount; MAX_APP_NUM],
 }
 
 lazy_static! {
@@ -59,12 +72,22 @@ lazy_static! {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
         }
+        let syscalls = core::array::from_fn(|_| SyscallCount {
+            inner: [
+                SyscallCountInner { syscall_id: SYSCALL_WRITE, used_counts: 0 },
+                SyscallCountInner { syscall_id: SYSCALL_EXIT, used_counts: 0 },
+                SyscallCountInner { syscall_id: SYSCALL_YIELD, used_counts: 0 },
+                SyscallCountInner { syscall_id: SYSCALL_GET_TIME, used_counts: 0 },
+                SyscallCountInner { syscall_id: SYSCALL_TRACE, used_counts: 0 },
+            ]
+        });
         TaskManager {
             num_app,
             inner: unsafe {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscalls,
                 })
             },
         }
@@ -135,6 +158,41 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn read_byte(&self, id: usize) -> u8 {
+        unsafe {
+            (id as *const u8).read_volatile()
+        }
+    }
+
+    fn write_byte(&self, id: usize, data: usize) {
+        unsafe {
+            (id as *mut u8).write_volatile(data as u8)
+        }
+    }
+
+    fn syscall_counts_add(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        for s in &mut inner.syscalls[current].inner {
+            if s.syscall_id == id {
+                s.used_counts += 1;
+                break;
+            }
+        }
+        drop(inner);
+    }
+
+    fn get_syscall_counts(&self, id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.syscalls[current]
+            .inner
+            .iter()
+            .find(|s| s.syscall_id == id)
+            .map(|s| s.used_counts)
+            .unwrap_or(0)
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +226,25 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// ch3-0 read one byte for certain address
+pub fn read_byte(id: usize) -> u8 {
+    TASK_MANAGER.read_byte(id)
+}
+
+/// ch3-1 change one byte for certain address
+pub fn write_byte(id: usize, data: usize) -> usize {
+    TASK_MANAGER.write_byte(id, data);
+    0
+}
+
+///
+pub fn syscall_counts_add(syscall_id: usize) {
+    TASK_MANAGER.syscall_counts_add(syscall_id);
+}
+
+///
+pub fn get_syscall_counts(syscall_id: usize) -> usize {
+    TASK_MANAGER.get_syscall_counts(syscall_id)
 }
