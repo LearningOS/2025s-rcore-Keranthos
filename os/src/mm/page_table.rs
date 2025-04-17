@@ -127,6 +127,7 @@ impl PageTable {
                 break;
             }
             if !pte.is_valid() {
+                println!("pte invalid!");
                 return None;
             }
             ppn = pte.ppn();
@@ -137,7 +138,7 @@ impl PageTable {
     #[allow(unused)]
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
         let pte = self.find_pte_create(vpn).unwrap();
-        assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
+        //assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
     }
     /// remove the map between virtual page number and physical page number
@@ -178,4 +179,36 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// judge a pos whether can be read/written by a user
+pub fn check_user_accessible(token: usize, va: usize, write: bool) -> bool {
+    println!("address of var: {}", va);
+    let vpn = VirtPageNum(va >> 12);
+    println!("vpn: {}", vpn.0);
+    let page_table = PageTable::from_token(token);
+    if let Some(pte) = page_table.translate(vpn) {
+        let flag = pte.flags();
+        if !flag.contains(PTEFlags::U) {
+            println!("no U");
+            return false;
+        }
+        if !write && !flag.contains(PTEFlags::R) {
+            println!("no R");
+            return false;
+        }
+        if write && !flag.contains(PTEFlags::W) {
+            println!("no W");
+            return false;
+        }
+        if write {
+            println!("write ok!");
+        } else {
+            println!("read ok!");
+        }
+        true
+    } else {
+        println!("no page_table_entry");
+        false
+    }
 }

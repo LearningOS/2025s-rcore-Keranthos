@@ -16,7 +16,9 @@ mod task;
 
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
+use crate::syscall::{SYSCALL_EXIT, SYSCALL_GET_TIME, SYSCALL_TRACE, SYSCALL_WRITE, SYSCALL_YIELD, SYSCALL_SBRK, SYSCALL_MUNMAP, SYSCALL_MMAP};
 use crate::trap::TrapContext;
+use crate::mm::{ can_alloc, MapPermission, VirtAddr, VPNRange };
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
@@ -40,12 +42,24 @@ pub struct TaskManager {
     inner: UPSafeCell<TaskManagerInner>,
 }
 
+///
+pub struct SyscallCount {
+    inner: [SyscallCountInner; 8],
+}
+
+///
+pub struct SyscallCountInner {
+    syscall_id: usize,
+    used_counts: usize,
+}
+
 /// The task manager inner in 'UPSafeCell'
 struct TaskManagerInner {
     /// task list
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    syscalls: Vec<SyscallCount>,
 }
 
 lazy_static! {
@@ -58,12 +72,28 @@ lazy_static! {
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
         }
+        let mut syscalls: Vec<SyscallCount> = Vec::new();
+        for _ in 0..num_app {
+            syscalls.push(SyscallCount {
+                inner: [
+                    SyscallCountInner { syscall_id: SYSCALL_WRITE, used_counts: 0 },
+                    SyscallCountInner { syscall_id: SYSCALL_EXIT, used_counts: 0 },
+                    SyscallCountInner { syscall_id: SYSCALL_YIELD, used_counts: 0 },
+                    SyscallCountInner { syscall_id: SYSCALL_GET_TIME, used_counts: 0 },
+                    SyscallCountInner { syscall_id: SYSCALL_SBRK, used_counts: 0 },
+                    SyscallCountInner { syscall_id: SYSCALL_MUNMAP, used_counts: 0 },
+                    SyscallCountInner { syscall_id: SYSCALL_TRACE, used_counts: 0 },
+                    SyscallCountInner { syscall_id: SYSCALL_MMAP, used_counts: 0 },
+                ],
+            });
+        }
         TaskManager {
             num_app,
             inner: unsafe {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscalls,
                 })
             },
         }
@@ -153,6 +183,61 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn syscall_counts_add(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        for s in &mut inner.syscalls[current].inner {
+            if s.syscall_id == id {
+                s.used_counts += 1;
+                break;
+            }
+        }
+        drop(inner);
+    }
+
+    fn get_syscall_counts(&self, id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.syscalls[current]
+            .inner
+            .iter()
+            .find(|s| s.syscall_id == id)
+            .map(|s| s.used_counts)
+            .unwrap_or(0)
+    }
+
+    fn map_memory(&self, start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {     
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        let page_count = end_va.ceil().0 - start_va.floor().0; 
+        let task = &mut inner.tasks[cur];
+        let areas = &mut task.memory_set.areas;
+        for area in areas {
+            if area.vpn_range.overlaps(&VPNRange::new(start_va.floor(), end_va.ceil())) {
+                return -1;
+            }
+        }
+        if !can_alloc(page_count as usize) {
+            return -1;
+        }
+
+        task.memory_set.insert_framed_area(start_va, end_va, permission);
+
+
+        let page_table = &mut task.memory_set.page_table;
+        let last_area = task.memory_set.areas.len() - 1;
+        task.memory_set.areas[last_area].map(page_table);
+        0
+    }
+
+    fn unmap_memory(&self, start_va: VirtAddr, end_va: VirtAddr ) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        let task = &mut inner.tasks[cur];
+        let memory_set = &mut task.memory_set;
+        memory_set.unmap_memory( start_va, end_va )
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +286,24 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+///
+pub fn syscall_counts_add(syscall_id: usize) {
+    TASK_MANAGER.syscall_counts_add(syscall_id);
+}
+
+///
+pub fn get_syscall_counts(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_syscall_counts(syscall_id) as isize
+}
+
+/// 
+pub fn map_memory( start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {
+    TASK_MANAGER.map_memory( start_va, end_va, permission )
+}
+
+///
+pub fn unmap_memory( start_va: VirtAddr, end_va: VirtAddr ) -> isize {
+    TASK_MANAGER.unmap_memory( start_va, end_va )
 }
