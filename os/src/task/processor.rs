@@ -73,7 +73,6 @@ impl Processor {
         }
 
         memory_set.insert_framed_area(start_va, end_va, permission);
-        
 
         /*let vpn = start_va.floor();
         let pte = memory_set.page_table.find_pte(vpn);

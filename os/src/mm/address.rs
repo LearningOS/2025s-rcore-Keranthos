@@ -244,6 +244,9 @@ where
     pub fn get_end(&self) -> T {
         self.r
     }
+    pub fn overlaps(&self, other: &SimpleRange<T>) -> bool {
+        !(self.get_end() <= other.get_start() || other.get_end() <= self.get_start())
+    }
 }
 impl<T> IntoIterator for SimpleRange<T>
 where

@@ -108,9 +108,6 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
     // ---- release current PCB automatically
 }
 
-/// YOUR JOB: get time with second and microsecond
-/// HINT: You might reimplement it with virtual memory management.
-/// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel:pid[{}] sys_get_time", current_task().unwrap().pid.0);
     let us = get_time_us();
@@ -135,7 +132,6 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     0
 }
 
-/// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!("kernel:pid[{}] sys_mmap", current_task().unwrap().pid.0);
     let start_va = VirtAddr::from(_start);
@@ -163,7 +159,6 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     map_memory(start_va, end_va, mp)
 }
 
-/// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!("kernel:pid[{}] sys_mumap", current_task().unwrap().pid.0);
     let start_va = VirtAddr::from(_start);
