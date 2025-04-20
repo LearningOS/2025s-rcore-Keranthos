@@ -7,6 +7,7 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::mm::{ can_alloc, MapPermission, VirtAddr, VPNRange };
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -43,6 +44,38 @@ impl Processor {
     ///Get current task in cloning semanteme
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
+    }
+
+    ///
+    pub fn map_memory(&self, start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {     
+        let page_count = end_va.ceil().0 - start_va.floor().0; 
+        let task = self.current.as_ref().unwrap();
+        let mut inner = task.inner_exclusive_access();
+        let memory_set = &mut inner.memory_set;
+        let areas = &mut memory_set.areas;
+        for area in areas {
+            if area.vpn_range.overlaps(&VPNRange::new(start_va.floor(), end_va.ceil())) {
+                return -1;
+            }
+        }
+        if !can_alloc(page_count as usize) {
+            return -1;
+        }
+
+        memory_set.insert_framed_area(start_va, end_va, permission);
+
+
+        let last_area = memory_set.areas.len() - 1;
+        let page_table = &mut memory_set.page_table;
+        memory_set.areas[last_area].map(page_table);
+        0
+    }
+
+    ///
+    pub fn unmap_memory(&self, start_va: VirtAddr, end_va: VirtAddr ) -> isize {
+        let task = self.current.as_ref().unwrap();
+        let mut inner = task.inner_exclusive_access();
+        inner.memory_set.unmap_memory( start_va, end_va )
     }
 }
 
@@ -108,4 +141,14 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// 
+pub fn map_memory( start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {
+    PROCESSOR.exclusive_access().map_memory( start_va, end_va, permission )
+}
+
+///
+pub fn unmap_memory( start_va: VirtAddr, end_va: VirtAddr ) -> isize {
+    PROCESSOR.exclusive_access().unmap_memory( start_va, end_va )
 }

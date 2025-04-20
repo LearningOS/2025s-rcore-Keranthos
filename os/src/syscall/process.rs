@@ -3,11 +3,12 @@ use alloc::sync::Arc;
 
 use crate::{
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
+    mm::{ translated_byte_buffer, translated_refmut, translated_str, MapPermission, VirtAddr },
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next,
+        suspend_current_and_run_next, map_memory, unmap_memory
     },
+    timer::get_time_us
 };
 
 #[repr(C)]
@@ -102,33 +103,61 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
     // ---- release current PCB automatically
 }
 
-/// YOUR JOB: get time with second and microsecond
-/// HINT: You might reimplement it with virtual memory management.
-/// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
+    trace!("kernel:pid[{}] sys_get_time", current_task().unwrap().pid.0);
+    let us = get_time_us();
+    let time_val = TimeVal { sec: us / 1000000, usec: us % 1000000 };
+
+    let bytes: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            &time_val as *const _ as *const u8,
+            core::mem::size_of::<TimeVal>(),
+        )
+    };
+    let buffers = translated_byte_buffer(
+        current_user_token(),
+        _ts as *const u8,
+        bytes.len(),
     );
-    -1
+    let mut offset = 0;
+    for buf in buffers {
+        let len = buf.len().min(bytes.len() - offset);
+        buf[..len].copy_from_slice(&bytes[offset..offset + len]);
+        offset += len;
+    }
+    0
 }
 
-/// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel:pid[{}] sys_mmap", current_task().unwrap().pid.0);
+    let start_va = VirtAddr::from(_start);
+    let end_va = VirtAddr::from(_start + _len);
+    if !start_va.aligned() {
+        return -1;
+    }
+    if _port & !0x7 != 0 {
+        return -1;
+    }
+    if _port & 0x7 == 0 {
+        return -1;
+    }
+    let mut mp = MapPermission::U;
+    if ((_port >> 0) & 1) == 1 { mp.insert(MapPermission::R); }
+    if ((_port >> 1) & 1) == 1 { mp.insert(MapPermission::W); }
+    if ((_port >> 2) & 1) == 1 { mp.insert(MapPermission::X); }
+
+    map_memory( start_va, end_va, mp )
 }
 
-/// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel:pid[{}] sys_mumap", current_task().unwrap().pid.0);
+    let start_va = VirtAddr::from(_start);
+    let end_va = VirtAddr::from(_start + _len);
+    if !start_va.aligned() {
+        return -1;
+    }
+
+    unmap_memory( start_va, end_va )
 }
 
 /// change data segment size

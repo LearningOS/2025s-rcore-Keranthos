@@ -32,8 +32,10 @@ lazy_static! {
 }
 /// address space
 pub struct MemorySet {
-    page_table: PageTable,
-    areas: Vec<MapArea>,
+    ///
+    pub page_table: PageTable,
+    ///
+    pub areas: Vec<MapArea>,
 }
 
 impl MemorySet {
@@ -271,6 +273,8 @@ impl MemorySet {
         self.areas.clear();
     }
 
+    
+
     /// shrink the area to new_end
     #[allow(unused)]
     pub fn shrink_to(&mut self, start: VirtAddr, new_end: VirtAddr) -> bool {
@@ -300,10 +304,87 @@ impl MemorySet {
             false
         }
     }
+
+    ///
+    pub fn unmap_memory(&mut self, start: VirtAddr, end: VirtAddr) -> isize {
+        let start_vpn = start.floor();
+        let end_vpn = end.ceil();
+        //let unmap_range = VPNRange::new(start_vpn, end_vpn);
+        let total_pages = end_vpn.0 - start_vpn.0;
+
+        let mut covered_pages = 0;
+        for area in &self.areas {
+            let a_start = area.vpn_range.get_start();
+            let a_end = area.vpn_range.get_end();
+
+            if a_end > start_vpn && a_start < end_vpn {
+                let cover_start = a_start.max(start_vpn);
+                let cover_end = a_end.min(end_vpn);
+                covered_pages += cover_end.0 - cover_start.0;
+            }
+        }
+
+        if covered_pages < total_pages {
+            return -1;
+        }
+
+        let mut new_areas = Vec::new();
+        for mut area in self.areas.drain(..) {
+            let a_start = area.vpn_range.get_start();
+            let a_end = area.vpn_range.get_end();
+
+            if a_start >= end_vpn || a_end <= start_vpn {
+                new_areas.push(area);
+                continue;
+            }
+
+            if a_start >= start_vpn && a_end <= end_vpn {
+                for vpn in area.vpn_range.clone() {
+                    area.unmap_one(&mut self.page_table, vpn);
+                }
+                continue;
+            }
+
+            if a_start < start_vpn && a_end > start_vpn && a_end <= end_vpn {
+                area.shrink_to(&mut self.page_table, start_vpn);
+                new_areas.push(area);
+                continue;
+            }
+
+            if a_start >= start_vpn && a_start < end_vpn && a_end > end_vpn {
+                let original_end = area.vpn_range.get_end();
+                area.shrink_to(&mut self.page_table, end_vpn);
+                area.vpn_range = VPNRange::new(end_vpn, original_end);
+                new_areas.push(area);
+                continue;
+            }
+
+            if a_start < start_vpn && a_end > end_vpn {
+                let mut left = area.clone();
+                let left_end = start_vpn;
+                left.vpn_range = VPNRange::new(a_start, left_end);
+                left.shrink_to(&mut self.page_table, left_end);
+                new_areas.push(left);
+
+                let mut right = area;
+                let original_end = right.vpn_range.get_end();
+                right.vpn_range = VPNRange::new(end_vpn, original_end);
+                for vpn in VPNRange::new(start_vpn, end_vpn) {
+                    right.unmap_one(&mut self.page_table, vpn);
+                }
+                new_areas.push(right);
+            }
+        }
+
+        self.areas = new_areas;
+        0
+    }
 }
+
 /// map area structure, controls a contiguous piece of virtual memory
+#[derive(Clone)]
 pub struct MapArea {
-    vpn_range: VPNRange,
+    pub vpn_range: VPNRange,
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     map_type: MapType,
     map_perm: MapPermission,

@@ -183,6 +183,38 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     v
 }
 
+/// judge a pos whether can be read/written by a user
+pub fn check_user_accessible(token: usize, va: usize, write: bool) -> bool {
+    println!("address of var: {}", va);
+    let vpn = VirtPageNum(va >> 12);
+    println!("vpn: {}", vpn.0);
+    let page_table = PageTable::from_token(token);
+    if let Some(pte) = page_table.translate(vpn) {
+        let flag = pte.flags();
+        if !flag.contains(PTEFlags::U) {
+            println!("no U");
+            return false;
+        }
+        if !write && !flag.contains(PTEFlags::R) {
+            println!("no R");
+            return false;
+        }
+        if write && !flag.contains(PTEFlags::W) {
+            println!("no W");
+            return false;
+        }
+        if write {
+            println!("write ok!");
+        } else {
+            println!("read ok!");
+        }
+        true
+    } else {
+        println!("no page_table_entry");
+        false
+    }
+}
+
 /// Translate&Copy a ptr[u8] array end with `\0` to a `String` Vec through page table
 pub fn translated_str(token: usize, ptr: *const u8) -> String {
     let page_table = PageTable::from_token(token);
