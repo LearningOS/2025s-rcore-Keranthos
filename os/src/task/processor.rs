@@ -7,7 +7,7 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
-use crate::mm::{ can_alloc, MapPermission, VirtAddr, VPNRange };
+use crate::mm::{can_alloc, MapPermission, VPNRange, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -47,35 +47,55 @@ impl Processor {
     }
 
     ///
-    pub fn map_memory(&self, start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {     
-        let page_count = end_va.ceil().0 - start_va.floor().0; 
+    pub fn map_memory(
+        &self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> isize {
+        let page_count = end_va.ceil().0 - start_va.floor().0;
         let task = self.current.as_ref().unwrap();
         let mut inner = task.inner_exclusive_access();
         let memory_set = &mut inner.memory_set;
         let areas = &mut memory_set.areas;
+        
         for area in areas {
-            if area.vpn_range.overlaps(&VPNRange::new(start_va.floor(), end_va.ceil())) {
+            if area
+                .vpn_range
+                .overlaps(&VPNRange::new(start_va.floor(), end_va.ceil()))
+            {
                 return -1;
             }
         }
+        
         if !can_alloc(page_count as usize) {
             return -1;
         }
 
         memory_set.insert_framed_area(start_va, end_va, permission);
+        
 
+        /*let vpn = start_va.floor();
+        let pte = memory_set.page_table.find_pte(vpn);
+        if let Some(pte) = pte {
+            if pte.is_valid() {
+                println!("[debug] vpn {:?} already mapped!", vpn);
+            }
+            println!("The test has passed?");
+        }
+        println!("fuck?");
 
         let last_area = memory_set.areas.len() - 1;
         let page_table = &mut memory_set.page_table;
-        memory_set.areas[last_area].map(page_table);
+        memory_set.areas[last_area].map(page_table);*/
         0
     }
 
     ///
-    pub fn unmap_memory(&self, start_va: VirtAddr, end_va: VirtAddr ) -> isize {
+    pub fn unmap_memory(&self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
         let task = self.current.as_ref().unwrap();
         let mut inner = task.inner_exclusive_access();
-        inner.memory_set.unmap_memory( start_va, end_va )
+        inner.memory_set.unmap_memory(start_va, end_va)
     }
 }
 
@@ -143,12 +163,14 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     }
 }
 
-/// 
-pub fn map_memory( start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {
-    PROCESSOR.exclusive_access().map_memory( start_va, end_va, permission )
+///
+pub fn map_memory(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {
+    PROCESSOR
+        .exclusive_access()
+        .map_memory(start_va, end_va, permission)
 }
 
 ///
-pub fn unmap_memory( start_va: VirtAddr, end_va: VirtAddr ) -> isize {
-    PROCESSOR.exclusive_access().unmap_memory( start_va, end_va )
+pub fn unmap_memory(start_va: VirtAddr, end_va: VirtAddr) -> isize {
+    PROCESSOR.exclusive_access().unmap_memory(start_va, end_va)
 }

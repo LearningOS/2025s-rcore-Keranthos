@@ -19,11 +19,27 @@ impl TaskManager {
     }
     /// Add process back to ready queue
     pub fn add(&mut self, task: Arc<TaskControlBlock>) {
-        self.ready_queue.push_back(task);
+        let stride_now = task.stride_exclusive_access().stride;
+        let mut pos = 0;
+
+        for (i, t) in self.ready_queue.iter().enumerate() {
+            if t.stride_exclusive_access().stride > stride_now {
+                pos = i;
+                break;
+            }
+            pos = i + 1;
+        }
+
+        self.ready_queue.insert(pos, task);
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        let task = self.ready_queue.pop_front()?;
+        {
+            let mut stride_info = task.stride_exclusive_access();
+            stride_info.stride += stride_info.pass
+        }
+        Some(task)
     }
 }
 

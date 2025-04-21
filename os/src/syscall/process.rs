@@ -3,12 +3,12 @@ use alloc::sync::Arc;
 
 use crate::{
     loader::get_app_data_by_name,
-    mm::{ translated_byte_buffer, translated_refmut, translated_str, MapPermission, VirtAddr },
+    mm::{translated_byte_buffer, translated_refmut, translated_str, MapPermission, VirtAddr},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, map_memory, unmap_memory
+        add_task, current_task, current_user_token, exit_current_and_run_next, map_memory,
+        suspend_current_and_run_next, unmap_memory,
     },
-    timer::get_time_us
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -68,7 +68,11 @@ pub fn sys_exec(path: *const u8) -> isize {
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
-    trace!("kernel::pid[{}] sys_waitpid [{}]", current_task().unwrap().pid.0, pid);
+    trace!(
+        "kernel::pid[{}] sys_waitpid [{}]",
+        current_task().unwrap().pid.0,
+        pid
+    );
     let task = current_task().unwrap();
     // find a child process
 
@@ -106,7 +110,10 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel:pid[{}] sys_get_time", current_task().unwrap().pid.0);
     let us = get_time_us();
-    let time_val = TimeVal { sec: us / 1000000, usec: us % 1000000 };
+    let time_val = TimeVal {
+        sec: us / 1000000,
+        usec: us % 1000000,
+    };
 
     let bytes: &[u8] = unsafe {
         core::slice::from_raw_parts(
@@ -114,11 +121,7 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
             core::mem::size_of::<TimeVal>(),
         )
     };
-    let buffers = translated_byte_buffer(
-        current_user_token(),
-        _ts as *const u8,
-        bytes.len(),
-    );
+    let buffers = translated_byte_buffer(current_user_token(), _ts as *const u8, bytes.len());
     let mut offset = 0;
     for buf in buffers {
         let len = buf.len().min(bytes.len() - offset);
@@ -142,11 +145,17 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
         return -1;
     }
     let mut mp = MapPermission::U;
-    if ((_port >> 0) & 1) == 1 { mp.insert(MapPermission::R); }
-    if ((_port >> 1) & 1) == 1 { mp.insert(MapPermission::W); }
-    if ((_port >> 2) & 1) == 1 { mp.insert(MapPermission::X); }
+    if ((_port >> 0) & 1) == 1 {
+        mp.insert(MapPermission::R);
+    }
+    if ((_port >> 1) & 1) == 1 {
+        mp.insert(MapPermission::W);
+    }
+    if ((_port >> 2) & 1) == 1 {
+        mp.insert(MapPermission::X);
+    }
 
-    map_memory( start_va, end_va, mp )
+    map_memory(start_va, end_va, mp)
 }
 
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
@@ -157,7 +166,7 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
         return -1;
     }
 
-    unmap_memory( start_va, end_va )
+    unmap_memory(start_va, end_va)
 }
 
 /// change data segment size
@@ -174,17 +183,38 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+
+    let current_task = current_task().unwrap();
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let new_task = current_task.spawn(data);
+        let new_pid = new_task.pid.0;
+
+        let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+
+        trap_cx.x[10] = 0;
+
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
-pub fn sys_set_priority(_prio: isize) -> isize {
+pub fn sys_set_priority(prio: isize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_set_priority",
         current_task().unwrap().pid.0
     );
-    -1
+    if prio <= 1 {
+        return -1;
+    }
+    let current_task = current_task().unwrap();
+    current_task.stride_exclusive_access().pass = 10000 / prio as usize;
+    prio
 }
