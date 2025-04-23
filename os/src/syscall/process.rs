@@ -4,7 +4,6 @@ use alloc::sync::Arc;
 
 use crate::{
     fs::{open_file, OpenFlags},
-    loader::get_app_data_by_name,
     mm::{translated_byte_buffer, translated_refmut, translated_str, MapPermission, VirtAddr},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next, map_memory,
@@ -182,17 +181,17 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
+pub fn sys_spawn(path: *const u8) -> isize {
     trace!(
         "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
     let token = current_user_token();
-    let path = translated_str(token, _path);
+    let path = translated_str(token, path);
 
     let current_task = current_task().unwrap();
-    if let Some(data) = get_app_data_by_name(path.as_str()) {
-        let new_task = current_task.spawn(data);
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+        let new_task = current_task.spawn(&app_inode.read_all());
         let new_pid = new_task.pid.0;
 
         let trap_cx = new_task.inner_exclusive_access().get_trap_cx();

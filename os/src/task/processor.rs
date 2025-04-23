@@ -7,6 +7,7 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::fs::{OSInode, Stat};
 use crate::mm::{can_alloc, MapPermission, VPNRange, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -58,7 +59,7 @@ impl Processor {
         let mut inner = task.inner_exclusive_access();
         let memory_set = &mut inner.memory_set;
         let areas = &mut memory_set.areas;
-        
+
         for area in areas {
             if area
                 .vpn_range
@@ -67,7 +68,7 @@ impl Processor {
                 return -1;
             }
         }
-        
+
         if !can_alloc(page_count as usize) {
             return -1;
         }
@@ -95,6 +96,28 @@ impl Processor {
         let task = self.current.as_ref().unwrap();
         let mut inner = task.inner_exclusive_access();
         inner.memory_set.unmap_memory(start_va, end_va)
+    }
+
+    /// get fd for get_stat
+    pub fn get_stat(&self, fd: usize, st: *mut Stat) -> bool {
+        let task = self.current.as_ref().unwrap();
+        let token = task.get_user_token();
+        let file = {
+            let inner = task.inner_exclusive_access();
+            if fd >= inner.fd_table.len() || fd < 3 {
+                return false;
+            }
+            inner.fd_table[fd].clone()
+        };
+        if let Some(file) = file {
+            let raw = Arc::as_ptr(&file) as *const OSInode;
+            unsafe {
+                (*raw).get_stat(st, token);
+            }
+            return true;
+        }
+        false
+        
     }
 }
 
@@ -174,3 +197,7 @@ pub fn unmap_memory(start_va: VirtAddr, end_va: VirtAddr) -> isize {
     PROCESSOR.exclusive_access().unmap_memory(start_va, end_va)
 }
 
+/// translate the fd to a OSInode
+pub fn get_stat(fd: usize, st: *mut Stat) -> bool {
+    PROCESSOR.exclusive_access().get_stat(fd, st)
+}

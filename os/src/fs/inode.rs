@@ -5,8 +5,10 @@
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
 use super::File;
+use super::Stat;
 use crate::drivers::BLOCK_DEVICE;
-use crate::mm::UserBuffer;
+use crate::fs::StatMode;
+use crate::mm::{UserBuffer, translated_refmut};
 use crate::sync::UPSafeCell;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -53,9 +55,38 @@ impl OSInode {
         }
         v
     }
+    /// get_link_count in OSInode
+    pub fn get_link_count(&self) -> u32 {
+        self.inner.exclusive_access().inode.get_link_count()
+    }
+    /// link in OSInode
+    pub fn link(&self, old_name: &str, new_name: &str) -> bool {
+        self.inner.exclusive_access().inode.link(old_name, new_name)
+    }
+    /// unlink in OSInode
+    pub fn unlink(&self, name: &str) -> bool {
+        self.inner.exclusive_access().inode.unlink(name)
+    }
+    /// complete get_stat
+    pub fn get_stat(&self, st: *mut Stat, token: usize) {
+        let st: &mut Stat = translated_refmut(token, st);
+        st.dev = 0;
+        st.nlink = self.get_link_count() as u32;
+        st.mode = if self
+            .inner
+            .exclusive_access()
+            .inode
+            .read_disk_inode(|disk_inode| disk_inode.is_dir())
+        {
+            StatMode::DIR
+        } else {
+            StatMode::FILE
+        };
+    }
 }
 
 lazy_static! {
+    ///
     pub static ref ROOT_INODE: Arc<Inode> = {
         let efs = EasyFileSystem::open(BLOCK_DEVICE.clone());
         Arc::new(EasyFileSystem::root_inode(&efs))
