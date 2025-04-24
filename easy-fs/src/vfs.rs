@@ -324,7 +324,7 @@ impl Inode {
         });
 
         if link_zero {
-            self.modify_disk_inode(|disk_inode| {
+            inode.modify_disk_inode(|disk_inode| {
                 let size = disk_inode.size;
                 let data_blocks_dealloc = disk_inode.clear_size(&self.block_device);
                 assert!(data_blocks_dealloc.len() == DiskInode::total_blocks(size) as usize);
@@ -332,6 +332,17 @@ impl Inode {
                     fs.dealloc_data(data_block);
                 }
             });
+
+            get_block_cache(block_id as usize, Arc::clone(&self.block_device))
+                .lock()
+                .modify(block_offset, |inode: &mut DiskInode| {
+                    inode.size = 0;
+                    inode.link_count = 0;
+                    inode.direct = [0; 27];
+                    inode.indirect1 = 0;
+                    inode.indirect2 = 0;
+                });
+            fs.inode_bitmap.dealloc(&self.block_device, inode_id.unwrap() as usize);
         }
 
         block_cache_sync_all();
