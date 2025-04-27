@@ -1,0 +1,6 @@
+{
+	"folders": [],
+	"settings": {
+		"rust-analyzer.cargo.target": "riscv64gc-unknown-none-elf"
+	}
+}

@@ -7,7 +7,7 @@ use super::{add_task, SignalFlags};
 use super::{pid_alloc, PidHandle};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
-use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
+use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell, DeadLockDetectContext};
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
@@ -49,6 +49,8 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// deadlock detect matrix
+    pub deadlock_matrix: DeadLockDetectContext,
 }
 
 impl ProcessControlBlockInner {
@@ -81,6 +83,17 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+    pub fn modify_deadlock_detect(&mut self, enable: usize){
+        match enable {
+            1 => {
+                self.deadlock_matrix.enable = true;
+            },
+            0 => {
+                self.deadlock_matrix.enable = false;
+            },
+            _ => {},
+        }
     }
 }
 
@@ -119,6 +132,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_matrix: DeadLockDetectContext::new(),
                 })
             },
         });
@@ -245,6 +259,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_matrix: DeadLockDetectContext::new(),
                 })
             },
         });
@@ -281,5 +296,8 @@ impl ProcessControlBlock {
     /// get pid
     pub fn getpid(&self) -> usize {
         self.pid.0
+    }
+    pub fn modify_deadlock_detect(&self, enable: usize){
+        self.inner_exclusive_access().modify_deadlock_detect(enable);
     }
 }

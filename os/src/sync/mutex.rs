@@ -2,14 +2,16 @@
 
 use super::UPSafeCell;
 use crate::task::TaskControlBlock;
-use crate::task::{block_current_and_run_next, suspend_current_and_run_next};
+use crate::task::{
+    block_current_and_run_next, current_process, suspend_current_and_run_next,
+};
 use crate::task::{current_task, wakeup_task};
 use alloc::{collections::VecDeque, sync::Arc};
 
 /// Mutex trait
 pub trait Mutex: Sync + Send {
     /// Lock the mutex
-    fn lock(&self);
+    fn lock(&self, mutex_id: usize);
     /// Unlock the mutex
     fn unlock(&self);
 }
@@ -30,8 +32,11 @@ impl MutexSpin {
 
 impl Mutex for MutexSpin {
     /// Lock the spinlock mutex
-    fn lock(&self) {
+    fn lock(&self, mutex_id: usize) {
         trace!("kernel: MutexSpin::lock");
+        let tid = current_task().unwrap().get_pid();
+        // let mut m_inner = process_inner.deadlock_matrix.mutex_inner.exclusive_access();
+        current_process().inner_exclusive_access().deadlock_matrix.mutex_inner.exclusive_access().need[tid][mutex_id] += 1;
         loop {
             let mut locked = self.locked.exclusive_access();
             if *locked {
@@ -39,7 +44,9 @@ impl Mutex for MutexSpin {
                 suspend_current_and_run_next();
                 continue;
             } else {
-                *locked = true;
+                current_process().inner_exclusive_access().deadlock_matrix.mutex_inner.exclusive_access().need[tid][mutex_id] = 0;
+                current_process().inner_exclusive_access().deadlock_matrix.mutex_inner.exclusive_access().allocation[tid][mutex_id] += 1;
+                * locked = true;
                 return;
             }
         }
@@ -79,14 +86,19 @@ impl MutexBlocking {
 
 impl Mutex for MutexBlocking {
     /// lock the blocking mutex
-    fn lock(&self) {
+    fn lock(&self, mutex_id: usize) {
         trace!("kernel: MutexBlocking::lock");
+        let tid = current_task().unwrap().get_pid();
+        // let mut m_inner = current_process().inner_exclusive_access().deadlock_matrix.mutex_inner.exclusive_access();
         let mut mutex_inner = self.inner.exclusive_access();
         if mutex_inner.locked {
             mutex_inner.wait_queue.push_back(current_task().unwrap());
+            current_process().inner_exclusive_access().deadlock_matrix.mutex_inner.exclusive_access().need[tid][mutex_id] += 1;
             drop(mutex_inner);
             block_current_and_run_next();
         } else {
+            current_process().inner_exclusive_access().deadlock_matrix.mutex_inner.exclusive_access().need[tid][mutex_id] = 0;
+            current_process().inner_exclusive_access().deadlock_matrix.mutex_inner.exclusive_access().allocation[tid][mutex_id] += 1;
             mutex_inner.locked = true;
         }
     }
